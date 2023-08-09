@@ -101,7 +101,15 @@ async def get_file(file_name: str):
         if str(file.object_name).strip(object_prefix) == file_name:
             update_file_lastseen(file_name)
             return StreamingResponse(
-                MinioClient.get_object(bucket, file.object_name),
+                MinioClient.get_object(bucket, file.object_name).stream(32 * 1024),
+                media_type=file.content_type,
+            )
+    # Handle Legacy Files
+    for file in MinioClient.list_objects(bucket, prefix=object_prefix):
+        if file_name in str(file.object_name).strip(object_prefix):
+            update_file_lastseen(str(file.object_name).strip(object_prefix))
+            return StreamingResponse(
+                MinioClient.get_object(bucket, file.object_name).stream(32 * 1024),
                 media_type=file.content_type,
             )
     raise HTTPException(status_code=404, detail="File not found")
