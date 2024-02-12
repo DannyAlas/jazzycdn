@@ -2,18 +2,13 @@ import logging
 import os
 import sys
 
-import axiom
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from firebase_admin import credentials, initialize_app
-from google.cloud import firestore
 from minio import Minio
-
-from .logging import AxiomHandler
 
 load_dotenv()
 
@@ -22,14 +17,6 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s: %(message)s"
 )
 log = logging.getLogger(__name__)
-
-
-axiom_token = os.getenv("AXIOM_API_TOKEN")
-ax_client = axiom.Client(
-    token=os.getenv("AXIOM_API_TOKEN"), org_id=os.getenv("AXIOM_ORG_ID")
-)
-axiom_handler = AxiomHandler(ax_client, "logs", level=logging.DEBUG, interval=1)
-log.addHandler(axiom_handler)
 
 
 def exception_handler(exeption_type, exception, traceback):
@@ -44,9 +31,10 @@ sys.excepthook = exception_handler
 
 ################################## APP INITS ##################################
 MinioClient = Minio(
-    "s3.danielalas.com",
+    "10.32.32.150:9695",
     access_key=os.getenv("MINIO_ACCESS_KEY"),
     secret_key=os.getenv("MINIO_SECRET_KEY"),
+    secure=False,
 )
 bucket = "public"
 object_prefix = "host/"
@@ -63,9 +51,6 @@ env_creds = {
     "auth_provider_x509_cert_url": os.getenv("AUTH_PROVIDER_X509_CERT_URL"),
     "client_x509_cert_url": os.getenv("CLIENT_X509_CERT_URL"),
 }
-cred = credentials.Certificate(env_creds)
-firebase = initialize_app(cred)
-db = firestore.Client.from_service_account_info(env_creds)
 
 app = FastAPI()
 allow_all = ["*"]
@@ -81,25 +66,25 @@ app.mount("/public", StaticFiles(directory="./src/public"), name="public")
 ###############################################################################
 
 
-def update_file_lastseen(file_name):
-    try:
-        db_file = db.collection("files").document(file_name).get().to_dict()
-        if db_file.get("last_seen") is None:
-            db_file["last_seen"] = firestore.SERVER_TIMESTAMP
-        if db_file.get("views") is None:
-            db_file["views"] = 0
-        db_file["views"] += 1
-        db.collection("files").document(file_name).set(db_file)
-    except Exception as e:
-        log.error(f"Error updating file last seen and views\n{e}")
-        return HTTPException(status_code=500, detail=f"File Not Found In Database\n{e}")
+# def update_file_lastseen(file_name):
+#     try:
+#         db_file = db.collection("files").document(file_name).get().to_dict()
+#         if db_file.get("last_seen") is None:
+#             db_file["last_seen"] = firestore.SERVER_TIMESTAMP
+#         if db_file.get("views") is None:
+#             db_file["views"] = 0
+#         db_file["views"] += 1
+#         db.collection("files").document(file_name).set(db_file)
+#     except Exception as e:
+#         log.error(f"Error updating file last seen and views\n{e}")
+#         return HTTPException(status_code=500, detail=f"File Not Found In Database\n{e}")
 
 
 @app.get("/{file_name}")
 async def get_file(file_name: str):
     for file in MinioClient.list_objects(bucket, prefix=object_prefix):
         if str(file.object_name).strip(object_prefix) == file_name:
-            update_file_lastseen(file_name)
+            # update_file_lastseen(file_name)
             return StreamingResponse(
                 MinioClient.get_object(bucket, file.object_name).stream(32 * 1024),
                 media_type=file.content_type,
@@ -107,7 +92,7 @@ async def get_file(file_name: str):
     # Handle Legacy Files
     for file in MinioClient.list_objects(bucket, prefix=object_prefix):
         if file_name in str(file.object_name).strip(object_prefix):
-            update_file_lastseen(str(file.object_name).strip(object_prefix))
+            # update_file_lastseen(str(file.object_name).strip(object_prefix))
             return StreamingResponse(
                 MinioClient.get_object(bucket, file.object_name).stream(32 * 1024),
                 media_type=file.content_type,
